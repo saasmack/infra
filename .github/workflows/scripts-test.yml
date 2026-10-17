@@ -22,7 +22,7 @@ jobs:
             bash -n "$script"
           done
           bash scripts/tests/github_settings_test.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Compile and lint (syntax, undefined names, unused)
