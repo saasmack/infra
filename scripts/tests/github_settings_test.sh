@@ -9,9 +9,8 @@ export TEST_DIR="$test_dir"
 gh() {
   case "$1 $2" in
     "auth status") return 0 ;;
-    "api user")
-      [[ "$4" == .id ]] && echo 123 || echo reviewer
-      ;;
+    "api users/reviewer") echo 123 ;;
+    "api repos/example/infra/collaborators/reviewer/permission") echo read ;;
     "api repos/example/infra")
       [[ "$4" == .permissions.admin ]] && echo true || echo 222
       ;;
@@ -28,17 +27,29 @@ gh() {
           [[ "${TEST_OTHER_REVIEWERS:-false}" != true ]] || echo 999
           return 0
           ;;
-        '{reviewers:'*) echo '{"reviewers":[{"type":"User","id":123}],"wait_timer":5,"prevent_self_review":true,"can_admins_bypass":false,"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}' ;;
-        'any('*)
+        '[.protection_rules[]'*) echo 5 ;;
+        '.deployment_branch_policy.custom_branch_policies // false') echo true ;;
+        '.can_admins_bypass == '*)
           [[ "${TEST_MISSING_REVIEWER:-false}" == true ]] && echo false || echo true
           ;;
-        '.can_admins_bypass') echo false ;;
         *) echo '{"name":"dev"}' ;;
       esac
       ;;
+    "api repos/example/infra/environments/dev/deployment-branch-policies?per_page=100")
+      if [[ "$4" == *'select(.name == "main"'* ]]; then
+        echo 456
+      fi
+      return 0
+      ;;
+    "api repos/example/infra/environments/dev/deployment-branch-policies") echo true ;;
     "api --method")
-      echo environment >> "$TEST_DIR/writes"
-      cat > "$TEST_DIR/payload"
+      if [[ "$3" == PUT ]]; then
+        echo environment >> "$TEST_DIR/writes"
+        cat > "$TEST_DIR/payload"
+      else
+        echo branch-policy >> "$TEST_DIR/writes"
+        cat > "$TEST_DIR/branch-policy"
+      fi
       [[ "${TEST_UNSUPPORTED:-false}" != true ]]
       ;;
     "variable set")
@@ -84,7 +95,11 @@ export GITHUB_ORG=example STATE_BUCKET=example-state-bucket
 export SSO_ADMIN_ROLE_ARN=arn:aws:iam::123456789012:role/admin
 
 run_script() {
-  printf '%s\n' "$1" | bash "$script_dir/00_setup_github_settings.sh" > "$TEST_DIR/output" 2>&1
+  {
+    printf '%s\n' "${2:-gated}"
+    [[ "${2:-gated}" != gated ]] || printf '%s\n' reviewer
+    printf '%s\n' "$1"
+  } | bash "$script_dir/00_setup_github_settings.sh" > "$TEST_DIR/output" 2>&1
 }
 assert_no_secret_output() {
   if grep -q MOCK_SECRET_MUST_NOT_BE_PRINTED "$TEST_DIR/output"; then
@@ -97,11 +112,34 @@ run_script n
 [[ ! -e "$TEST_DIR/writes" ]]
 grep -q 'Cancelled' "$TEST_DIR/output"
 
+run_script n manual
+[[ ! -e "$TEST_DIR/writes" ]]
+grep -q 'Cancelled' "$TEST_DIR/output"
+
+if run_script y invalid; then echo "Invalid mode reported success" >&2; exit 1; fi
+[[ ! -e "$TEST_DIR/writes" ]]
+grep -q 'Enter manual or gated' "$TEST_DIR/output"
+
+export TEST_EXISTING_ENV=true
+run_script y manual
+grep -q 'Setup complete' "$TEST_DIR/output"
+[[ $(cat "$TEST_DIR/DEV_PROTECTION_TIER") == manual ]]
+! grep -Eq '^(environment|branch-policy)$' "$TEST_DIR/writes"
+[[ ! -e "$TEST_DIR/payload" && ! -e "$TEST_DIR/branch-policy" ]]
+assert_no_secret_output
+rm "$TEST_DIR/writes"
+unset TEST_EXISTING_ENV
+
 run_script y
 grep -q 'Setup complete' "$TEST_DIR/output"
+[[ $(cat "$TEST_DIR/DEV_PROTECTION_TIER") == gated ]]
 grep -q '^secret$' "$TEST_DIR/writes"
 grep -q '"id":123' "$TEST_DIR/payload"
 grep -q '"can_admins_bypass":false' "$TEST_DIR/payload"
+grep -q '"prevent_self_review":true' "$TEST_DIR/payload"
+grep -q '"protected_branches":false,"custom_branch_policies":true' "$TEST_DIR/payload"
+grep -q '^branch-policy$' "$TEST_DIR/writes"
+grep -q '"name":"main","type":"branch"' "$TEST_DIR/branch-policy"
 assert_no_secret_output
 
 rm "$TEST_DIR/writes"
@@ -110,7 +148,8 @@ run_script y
 ! grep -q '^secret$' "$TEST_DIR/writes"
 grep -q '"wait_timer":5' "$TEST_DIR/payload"
 grep -q '"prevent_self_review":true' "$TEST_DIR/payload"
-grep -q '"protected_branches":true' "$TEST_DIR/payload"
+grep -q '"protected_branches":false,"custom_branch_policies":true' "$TEST_DIR/payload"
+! grep -q '^branch-policy$' "$TEST_DIR/writes"
 
 rm "$TEST_DIR/writes"
 export TEST_OTHER_REVIEWERS=true
@@ -142,11 +181,11 @@ if run_script y; then echo "Terraform failure reported success" >&2; exit 1; fi
 assert_no_secret_output
 unset TEST_TERRAFORM_FAILURE SSO_ADMIN_ROLE_ARN
 export TEST_EXISTING_SSO=arn:aws:iam::123456789012:role/existing-admin
-printf '\ny\n' | bash "$script_dir/00_setup_github_settings.sh" > "$TEST_DIR/output" 2>&1
+printf '\ngated\nreviewer\ny\n' | bash "$script_dir/00_setup_github_settings.sh" > "$TEST_DIR/output" 2>&1
 [[ $(cat "$TEST_DIR/SSO_ADMIN_ROLE_ARN") == "$TEST_EXISTING_SSO" ]]
 rm "$TEST_DIR/writes"
 unset TEST_EXISTING_SSO
-printf '\ny\n' | bash "$script_dir/00_setup_github_settings.sh" > "$TEST_DIR/output" 2>&1
+printf '\ngated\nreviewer\ny\n' | bash "$script_dir/00_setup_github_settings.sh" > "$TEST_DIR/output" 2>&1
 ! grep -q '^variable SSO_ADMIN_ROLE_ARN$' "$TEST_DIR/writes"
 assert_no_secret_output
-echo "GitHub settings tests passed (cancellation, creation, rerun, preservation, and failure paths)."
+echo "GitHub settings tests passed (manual/gated modes, cancellation, creation, rerun, preservation, and failure paths)."
