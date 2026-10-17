@@ -1,7 +1,7 @@
 name: Terraform Infrastructure
 
 # PR to main        → plan only
-# Push/merge to main → plan (auto) → approval gate → apply
+# Push/merge to main → plan; gated mode additionally applies behind dev approval
 # Manual dispatch    → plan, apply, or destroy dev environment
 
 on:
@@ -109,11 +109,13 @@ jobs:
     name: Terraform Apply
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: plan
+    needs: [plan, security-scan]
     if: |
-      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
-    environment: dev   # ← pauses here and waits for manual approval
+      github.ref == 'refs/heads/main' &&
+      (vars.DEV_PROTECTION_TIER == 'manual' || vars.DEV_PROTECTION_TIER == 'gated') &&
+      ((github.event_name == 'push' && vars.DEV_PROTECTION_TIER == 'gated') ||
+       (github.event_name == 'workflow_dispatch' && inputs.action == 'apply'))
+    environment: dev   # Approval is enforced by environment rules in gated mode.
     defaults:
       run:
         working-directory: envs/dev
@@ -154,11 +156,14 @@ jobs:
     name: Terraform Destroy
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    needs: security-scan
     if: |
+      github.ref == 'refs/heads/main' &&
+      (vars.DEV_PROTECTION_TIER == 'manual' || vars.DEV_PROTECTION_TIER == 'gated') &&
       github.event_name == 'workflow_dispatch' &&
       github.event.inputs.action == 'destroy' &&
       github.event.inputs.confirm_destroy == 'destroy'
-    environment: dev   # ← approval gate for destroy too
+    environment: dev   # Approval is enforced by environment rules in gated mode.
     defaults:
       run:
         working-directory: envs/dev

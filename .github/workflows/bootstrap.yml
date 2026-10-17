@@ -1,7 +1,7 @@
 name: Bootstrap (CI OIDC)
 
 # Owns the GitHub OIDC provider and Terraform CI roles (envs/bootstrap, separate state).
-# Plan on PR, apply on merge to main behind the dev approval gate.
+# Gated: apply on main behind dev approval. Manual: main-only manual apply.
 # Intentionally has NO destroy action: tearing down envs/dev must never remove CI login.
 
 on:
@@ -13,6 +13,13 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      action:
+        description: 'Bootstrap action'
+        required: true
+        default: 'plan'
+        type: choice
+        options: [plan, apply]
 
 permissions:
   contents: read
@@ -60,7 +67,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: plan
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (vars.DEV_PROTECTION_TIER == 'manual' || vars.DEV_PROTECTION_TIER == 'gated') &&
+      ((github.event_name == 'push' && vars.DEV_PROTECTION_TIER == 'gated') ||
+       (github.event_name == 'workflow_dispatch' && inputs.action == 'apply'))
     environment: dev
     defaults:
       run:
