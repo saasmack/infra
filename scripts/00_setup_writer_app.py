@@ -63,7 +63,6 @@ def manifest(owner, name, callback):
         "url": f"https://github.com/{owner}/infra",
         "redirect_url": callback,
         "public": False,
-        "hook_attributes": {"active": False},
         "default_permissions": PERMISSIONS,
         "default_events": [],
     }
