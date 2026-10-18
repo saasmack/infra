@@ -31,7 +31,7 @@ class WriterAppTests(unittest.TestCase):
         data = writer.manifest("demo", "demo-writer", "http://127.0.0.1:1234/callback")
         self.assertEqual(data["default_permissions"], writer.PERMISSIONS)
         self.assertFalse(data["public"])
-        self.assertFalse(data["hook_attributes"]["active"])
+        self.assertNotIn("hook_attributes", data)
         self.assertEqual(data["url"], "https://github.com/demo/infra")
 
     def test_local_manifest_callback_rejects_wrong_state(self):
